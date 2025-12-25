@@ -47,8 +47,12 @@ def execute_query(query, params=None, fetch_one=False, fetch_all=False):
         elif fetch_all:
             result = cursor.fetchall()
         else:
-            conn.commit()
+            # For INSERT, UPDATE, DELETE operations
             result = cursor.rowcount
+        
+        # Always commit write operations (INSERT, UPDATE, DELETE)
+        # SELECT queries won't be affected by commit
+        conn.commit()
         
         cursor.close()
         return result

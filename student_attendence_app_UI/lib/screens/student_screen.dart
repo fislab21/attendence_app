@@ -37,7 +37,7 @@ class _StudentScreenState extends State<StudentScreen>
     try {
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
-      
+
       final data = await ApiService.getAttendanceRecords(userId);
       setState(() {
         _attendanceHistory = data;
@@ -52,7 +52,7 @@ class _StudentScreenState extends State<StudentScreen>
     try {
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
-      
+
       final stats = await ApiService.getStudentStats(userId, null);
       setState(() {
         _sessionsAttended = stats['sessions_attended'] ?? 0;
@@ -60,7 +60,7 @@ class _StudentScreenState extends State<StudentScreen>
         _justifiedAbsences = stats['justified_absences'] ?? 0;
         _unjustifiedAbsences = stats['unjustified_absences'] ?? 0;
       });
-      
+
       // Load excluded courses
       if (stats['is_excluded'] == true) {
         // You can load excluded courses here if needed
@@ -89,7 +89,7 @@ class _StudentScreenState extends State<StudentScreen>
         _showMessage('User not logged in', isError: true);
         return;
       }
-      
+
       await ApiService.markAttendance(code, userId);
       setState(() {
         _isSubmitting = false;
@@ -97,7 +97,7 @@ class _StudentScreenState extends State<StudentScreen>
       });
       _codeController.clear();
       _showMessage('Attendance recorded successfully!', isError: false);
-      
+
       // Reload data
       _loadAttendanceData();
       _loadStats();
@@ -109,9 +109,6 @@ class _StudentScreenState extends State<StudentScreen>
       }
       _showMessage(errorMsg, isError: true);
     }
-
-    setState(() => _isSubmitting = false);
-    _showMessage('Backend integration required', isError: true);
   }
 
   void _showMessage(String message, {required bool isError}) {
