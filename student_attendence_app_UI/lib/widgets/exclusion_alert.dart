@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class ExclusionAlert extends StatelessWidget {
   final List excludedCourses;
 
-  const ExclusionAlert({required this.excludedCourses});
+  const ExclusionAlert({super.key, required this.excludedCourses});
 
   @override
   Widget build(BuildContext context) {

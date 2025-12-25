@@ -346,3 +346,40 @@ async def update_attendance_status(session_id: str, student_id: str, absence_typ
     
     return response
 
+
+@router.get("/courses/{teacher_id}")
+async def get_teacher_courses(teacher_id: str):
+    """Get all courses assigned to a teacher"""
+    # Get teacher_id from user_id
+    teacher_query = "SELECT teacher_id FROM teachers WHERE user_id = %s"
+    teacher = execute_query(teacher_query, (teacher_id,), fetch_one=True)
+    
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+    
+    query = """
+        SELECT 
+            c.course_id,
+            c.course_name,
+            c.course_code
+        FROM courses c
+        JOIN teacher_courses tc ON c.course_id = tc.course_id
+        WHERE tc.teacher_id = %s
+        ORDER BY c.course_name
+    """
+    
+    courses = execute_query(query, (teacher["teacher_id"],), fetch_all=True)
+    
+    if courses is None:
+        return []
+    
+    result = []
+    for course in courses:
+        result.append({
+            "course_id": course["course_id"],
+            "course": course["course_name"],
+            "course_code": course["course_code"],
+        })
+    
+    return result
+

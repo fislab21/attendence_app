@@ -20,8 +20,6 @@ class _StudentScreenState extends State<StudentScreen>
 
   int _sessionsAttended = 0;
   int _totalAbsences = 0;
-  int _justifiedAbsences = 0;
-  int _unjustifiedAbsences = 0;
   List<Map<String, dynamic>> _attendanceHistory = [];
   final List<Map<String, dynamic>> _excludedCourses = [];
 
@@ -44,7 +42,6 @@ class _StudentScreenState extends State<StudentScreen>
       });
     } catch (e) {
       // Handle error silently or show message
-      print('Error loading attendance data: $e');
     }
   }
 
@@ -57,8 +54,6 @@ class _StudentScreenState extends State<StudentScreen>
       setState(() {
         _sessionsAttended = stats['sessions_attended'] ?? 0;
         _totalAbsences = stats['total_absences'] ?? 0;
-        _justifiedAbsences = stats['justified_absences'] ?? 0;
-        _unjustifiedAbsences = stats['unjustified_absences'] ?? 0;
       });
 
       // Load excluded courses
@@ -67,7 +62,6 @@ class _StudentScreenState extends State<StudentScreen>
       }
     } catch (e) {
       // Handle error silently or show message
-      print('Error loading stats: $e');
     }
   }
 

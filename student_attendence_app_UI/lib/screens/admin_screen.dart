@@ -104,7 +104,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    value: selectedRole,
+                    initialValue: selectedRole,
                     items: const [
                       DropdownMenuItem(
                         value: 'student',
@@ -120,6 +120,7 @@ class _AdminScreenState extends State<AdminScreen> {
                         setDialogState(() => selectedRole = v ?? 'student'),
                     decoration: const InputDecoration(labelText: 'Role'),
                   ),
+                  // ignore: unnecessary_null_comparison
                   if (errorMessage != null)
                     Column(
                       children: [
@@ -170,9 +171,13 @@ class _AdminScreenState extends State<AdminScreen> {
                       selectedRole,
                     );
 
+                    if (!mounted) return;
+
                     if (response['success'] == true) {
                       Navigator.pop(context);
+                      if (!mounted) return;
                       await _loadUsers();
+                      if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Account created successfully'),
@@ -181,6 +186,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       );
                     }
                   } catch (e) {
+                    if (!mounted) return;
                     setDialogState(
                       () => errorMessage = 'Error: ${e.toString()}',
                     );
@@ -590,7 +596,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<Map<String, dynamic>>(
-                      value: selectedTeacher,
+                      initialValue: selectedTeacher,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.person),
@@ -744,6 +750,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
                           setState(() {});
 
+                          if (!mounted) return;
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -754,6 +761,7 @@ class _AdminScreenState extends State<AdminScreen> {
                             ),
                           );
                         } catch (e) {
+                          if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text('Error assigning courses: $e'),

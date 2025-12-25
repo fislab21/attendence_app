@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/user_header.dart';
 import '../services/auth_service.dart';
+import '../services/api_service.dart';
 import 'profile_screen.dart';
 
 class TeacherScreen extends StatefulWidget {
@@ -13,8 +14,41 @@ class TeacherScreen extends StatefulWidget {
 class _TeacherScreenState extends State<TeacherScreen> {
   String? _currentCode;
   String? _activeSessionId;
+  final List<Map<String, dynamic>> _courses = [];
   final List<Map<String, dynamic>> _sessions = [];
   final List<Map<String, dynamic>> _students = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAssignedCourses();
+  }
+
+  Future<void> _loadAssignedCourses() async {
+    try {
+      final userId = AuthService.currentUser?['id'];
+      if (userId == null) return;
+
+      // Get all scheduled sessions for the teacher
+      final sessions = await ApiService.getTeacherSessions(userId);
+
+      // Filter sessions that are scheduled (not completed) and in the future
+      final now = DateTime.now();
+      final upcomingSessions = sessions.where((session) {
+        if (session['status'] == 'completed') return false;
+        final sessionDate = DateTime.tryParse(session['date'] ?? '');
+        if (sessionDate == null) return false;
+        return sessionDate.isAfter(now);
+      }).toList();
+
+      setState(() {
+        _courses.clear();
+        _courses.addAll(upcomingSessions);
+      });
+    } catch (e) {
+      // Handle error silently
+    }
+  }
 
   String _generateCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -24,6 +58,34 @@ class _TeacherScreenState extends State<TeacherScreen> {
       code.write(chars[(random + i) % chars.length]);
     }
     return code.toString();
+  }
+
+  String _formatSessionDateTime(String? dateString) {
+    if (dateString == null || dateString.isEmpty) return 'TBA';
+    try {
+      final dateTime = DateTime.parse(dateString);
+      return '${dateTime.day} ${_getMonthName(dateTime.month)} ${dateTime.year}';
+    } catch (e) {
+      return 'TBA';
+    }
+  }
+
+  String _getMonthName(int month) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return months[month - 1];
   }
 
   void _startSession(String sessionId) {
@@ -203,6 +265,258 @@ class _TeacherScreenState extends State<TeacherScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _createSession(Map<String, dynamic> course) async {
+    try {
+      final code = _generateCode();
+
+      // Show dialog with the code
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.play_circle_outline, color: Colors.green),
+              SizedBox(width: 12),
+              Text('Session Started'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.shade200, width: 2),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Attendance Code',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      code,
+                      style: const TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 4,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Valid for this session',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Share this code with your students to mark attendance.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+
+      // Update the session with the code
+      setState(() {
+        final index = _courses.indexWhere((c) => c['id'] == course['id']);
+        if (index != -1) {
+          _courses[index]['code'] = code;
+          _courses[index]['status'] = 'active';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start session: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  List<Widget> _buildAssignedCoursesList() {
+    if (_courses.isEmpty) {
+      return [
+        const Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Text('No upcoming sessions scheduled'),
+        ),
+      ];
+    }
+
+    return _courses.map((course) {
+      return Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.blue.shade200, width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: Colors.blue.shade100,
+                    child: const Icon(
+                      Icons.school_outlined,
+                      color: Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          course['course'] ?? 'Unknown Course',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          course['course_code'] ?? '',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        // Display session date and time
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.calendar_today,
+                              size: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatSessionDateTime(course['date']),
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.access_time,
+                              size: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              course['time'] ?? 'TBA',
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Chip(
+                    label: Text(
+                      course['status']?.toUpperCase() ?? 'SCHEDULED',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    backgroundColor: Colors.blue.shade50,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Show session code if exists
+              if (course['code'] != null && course['code']!.isNotEmpty) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    border: Border.all(color: Colors.amber.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Attendance Code',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        course['code'] ?? '',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2,
+                          color: Colors.amber,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _createSession(course),
+                  icon: const Icon(Icons.play_circle_outline),
+                  label: course['code'] != null && course['code']!.isNotEmpty
+                      ? const Text('Start Session')
+                      : const Text('Create Session'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }).toList();
   }
 
   List<Widget> _buildSessionList() {
@@ -478,6 +792,28 @@ class _TeacherScreenState extends State<TeacherScreen> {
                             ),
                           ),
                         ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Today\'s Sessions',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        ..._buildAssignedCoursesList(),
                       ],
                     ),
                   ),

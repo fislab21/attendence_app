@@ -8,6 +8,7 @@ class AttendanceCard extends StatelessWidget {
   final int unjustifiedCount;
 
   const AttendanceCard({
+    super.key,
     required this.courseCode,
     required this.courseName,
     required this.presentCount,

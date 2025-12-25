@@ -178,6 +178,18 @@ class ApiService {
     return [];
   }
 
+  static Future<List<Map<String, dynamic>>> getTeacherCourses(
+    String teacherId,
+  ) async {
+    final response = await _get('/teacher/courses/$teacherId');
+    if (response is List) {
+      return List<Map<String, dynamic>>.from(
+        response.map((x) => x as Map<String, dynamic>),
+      );
+    }
+    return [];
+  }
+
   static Future<Map<String, dynamic>> getSessionAttendance(
     String sessionId,
   ) async {
