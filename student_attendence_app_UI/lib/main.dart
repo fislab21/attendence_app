@@ -6,7 +6,9 @@ import 'screens/admin_screen.dart';
 import 'screens/profile_screen.dart';
 
 void main() {
-  runApp(AttendanceApp());
+  // Normal mode: Login required
+  // No demo user - users must login
+  runApp(const AttendanceApp());
 }
 
 class AttendanceApp extends StatelessWidget {
@@ -14,16 +16,18 @@ class AttendanceApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Always start at login screen
+    // User must login to access other screens
     return MaterialApp(
       title: 'Attendance System',
       theme: ThemeData(primarySwatch: Colors.green),
       initialRoute: '/',
       routes: {
-        '/': (context) => LoginScreen(),
-        '/student': (context) => StudentScreen(),
-        '/teacher': (context) => TeacherScreen(),
-        '/admin': (context) => AdminScreen(),
-        '/profile': (context) => ProfileScreen(),
+        '/': (context) => const LoginScreen(),
+        '/student': (context) => const StudentScreen(),
+        '/teacher': (context) => const TeacherScreen(),
+        '/admin': (context) => const AdminScreen(),
+        '/profile': (context) => const ProfileScreen(),
       },
     );
   }

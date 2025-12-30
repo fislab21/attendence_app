@@ -18,6 +18,9 @@ class _TeacherScreenState extends State<TeacherScreen> {
   final List<Map<String, dynamic>> _sessions = [];
   final List<Map<String, dynamic>> _students = [];
 
+  // Local attendance tracking: { sessionId: { studentId: { 'status': 'present'|'absent', 'justified': true|false } } }
+  final Map<String, Map<String, Map<String, dynamic>>> _attendanceMap = {};
+
   @override
   void initState() {
     super.initState();
@@ -29,24 +32,49 @@ class _TeacherScreenState extends State<TeacherScreen> {
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
 
-      // Get all scheduled sessions for the teacher
+      // Get all sessions for the teacher from backend
       final sessions = await ApiService.getTeacherSessions(userId);
-
-      // Filter sessions that are scheduled (not completed) and in the future
-      final now = DateTime.now();
-      final upcomingSessions = sessions.where((session) {
-        if (session['status'] == 'completed') return false;
-        final sessionDate = DateTime.tryParse(session['date'] ?? '');
-        if (sessionDate == null) return false;
-        return sessionDate.isAfter(now);
-      }).toList();
 
       setState(() {
         _courses.clear();
-        _courses.addAll(upcomingSessions);
+        _courses.addAll(sessions);
+
+        // Initialize attendance tracking for each session
+        for (var session in sessions) {
+          final sessionId = session['id'];
+          _attendanceMap[sessionId] = {};
+        }
       });
     } catch (e) {
-      // Handle error silently
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading sessions: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadStudentsForSession(String sessionId) async {
+    try {
+      // Get students enrolled in this session from backend
+      final students = await ApiService.getSessionStudents(sessionId);
+
+      setState(() {
+        _students.clear();
+        _students.addAll(students);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading students: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -89,17 +117,10 @@ class _TeacherScreenState extends State<TeacherScreen> {
   }
 
   void _startSession(String sessionId) {
+    _loadStudentsForSession(sessionId);
+
     final code = _generateCode();
     final expiresAt = DateTime.now().add(const Duration(hours: 2));
-    final sessionIndex = _sessions.indexWhere((s) => s['id'] == sessionId);
-
-    setState(() {
-      _currentCode = code;
-      _activeSessionId = sessionId;
-      _sessions[sessionIndex]['status'] = 'active';
-      _sessions[sessionIndex]['code'] = code;
-      _sessions[sessionIndex]['expiresAt'] = expiresAt;
-    });
 
     showDialog(
       context: context,
@@ -151,7 +172,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Share this code with your students. The session is now active.',
+              'Share this code with your students. Students can now mark their attendance.',
               textAlign: TextAlign.center,
             ),
           ],
@@ -162,13 +183,37 @@ class _TeacherScreenState extends State<TeacherScreen> {
             child: const Text('Close'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Code copied to clipboard')),
-              );
+            onPressed: () async {
+              try {
+                // Call backend API to start session
+                await ApiService.startSession(sessionId, code);
+
+                if (mounted) {
+                  setState(() {
+                    _currentCode = code;
+                    _activeSessionId = sessionId;
+                  });
+
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Session started successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error starting session: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
             },
-            child: const Text('Copy Code'),
+            child: const Text('Start Session'),
           ),
         ],
       ),
@@ -188,7 +233,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
           ],
         ),
         content: const Text(
-          'Are you sure you want to close this session? Students will no longer be able to mark attendance.',
+          'Are you sure you want to close this session? Attendance records will be saved.',
         ),
         actions: [
           TextButton(
@@ -198,23 +243,8 @@ class _TeacherScreenState extends State<TeacherScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
-              final sessionIndex = _sessions.indexWhere(
-                (s) => s['id'] == sessionId,
-              );
-              setState(() {
-                _sessions[sessionIndex]['status'] = 'completed';
-                if (_activeSessionId == sessionId) {
-                  _currentCode = null;
-                  _activeSessionId = null;
-                }
-              });
+              _saveAttendanceAndCloseSession(sessionId);
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Session closed successfully'),
-                  backgroundColor: Colors.green,
-                ),
-              );
             },
             child: const Text('Close Session'),
           ),
@@ -223,18 +253,176 @@ class _TeacherScreenState extends State<TeacherScreen> {
     );
   }
 
-  void _viewAttendanceList(String sessionId) {
-    final session = _sessions.firstWhere((s) => s['id'] == sessionId);
+  Future<void> _saveAttendanceAndCloseSession(String sessionId) async {
+    try {
+      // Save all attendance records to backend
+      final sessionAttendance = _attendanceMap[sessionId] ?? {};
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AttendanceListScreen(
-          session: session,
-          students: _students,
-          onUpdate: () => setState(() {}),
+      for (var studentId in sessionAttendance.keys) {
+        final record = sessionAttendance[studentId];
+        if (record != null) {
+          // Call backend API to update attendance
+          await ApiService.updateAttendanceStatus(
+            sessionId,
+            studentId,
+            record['status'] ?? 'absent',
+            justified: (record['justified'] == true) ? 1 : 0,
+          );
+        }
+      }
+
+      // Close session on backend
+      await ApiService.closeSession(sessionId);
+
+      // Update local state
+      final courseIndex = _courses.indexWhere((c) => c['id'] == sessionId);
+      setState(() {
+        if (courseIndex != -1) {
+          _courses[courseIndex]['status'] = 'completed';
+        }
+        if (_activeSessionId == sessionId) {
+          _currentCode = null;
+          _activeSessionId = null;
+        }
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Session closed and attendance saved to database'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error closing session: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _viewAttendanceList(String sessionId) {
+    showDialog(
+      context: context,
+      builder: (context) => _buildAttendanceDialog(sessionId),
+    );
+  }
+
+  Widget _buildAttendanceDialog(String sessionId) {
+    final sessionData = _attendanceMap[sessionId] ?? {};
+
+    return AlertDialog(
+      title: const Text('Session Attendance'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView.builder(
+          itemCount: _students.length,
+          itemBuilder: (context, index) {
+            final student = _students[index];
+            final studentId = student['id'];
+            final attendance =
+                sessionData[studentId] ??
+                {'status': 'absent', 'justified': false};
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        student['name'],
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              children: [
+                                const Text('Present'),
+                                Radio<String>(
+                                  value: 'present',
+                                  groupValue: attendance['status'],
+                                  onChanged: (value) {
+                                    setState(() {
+                                      sessionData[studentId] = {
+                                        'status': 'present',
+                                        'justified': false,
+                                      };
+                                    });
+                                    Navigator.pop(context);
+                                    _viewAttendanceList(sessionId);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                const Text('Absent'),
+                                Radio<String>(
+                                  value: 'absent',
+                                  groupValue: attendance['status'],
+                                  onChanged: (value) {
+                                    setState(() {
+                                      sessionData[studentId] = {
+                                        'status': 'absent',
+                                        'justified':
+                                            attendance['justified'] ?? false,
+                                      };
+                                    });
+                                    Navigator.pop(context);
+                                    _viewAttendanceList(sessionId);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      // Show justified checkbox only if absent
+                      if (attendance['status'] == 'absent') ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Checkbox(
+                              value: attendance['justified'] ?? false,
+                              onChanged: (value) {
+                                setState(() {
+                                  sessionData[studentId] = {
+                                    'status': 'absent',
+                                    'justified': value ?? false,
+                                  };
+                                });
+                                Navigator.pop(context);
+                                _viewAttendanceList(sessionId);
+                              },
+                            ),
+                            const Expanded(child: Text('Justified Absence')),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Done'),
+        ),
+      ],
     );
   }
 

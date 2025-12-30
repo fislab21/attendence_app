@@ -166,8 +166,9 @@ class _AdminScreenState extends State<AdminScreen> {
                     final response = await ApiService.createUser(
                       usernameController.text.trim(),
                       passwordController.text.trim(),
+                      nameController.text.trim().split(' ').first,
+                      nameController.text.trim().split(' ').last,
                       emailController.text.trim(),
-                      nameController.text.trim(),
                       selectedRole,
                     );
 

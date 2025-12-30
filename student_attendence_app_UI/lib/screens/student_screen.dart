@@ -36,12 +36,26 @@ class _StudentScreenState extends State<StudentScreen>
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
 
-      final data = await ApiService.getAttendanceRecords(userId);
+      // Get attendance records from backend
+      final records = await ApiService.getStudentAttendance(userId);
+
+      // Transform data for display
+      final history = records.map<Map<String, dynamic>>((record) {
+        return {
+          'course': record['course_name'] ?? 'Unknown Course',
+          'date': record['date'] ?? '',
+          'time': record['time'] ?? '',
+          'code': record['code'] ?? '',
+          'status': record['status'] ?? 'Present',
+        };
+      }).toList();
+
       setState(() {
-        _attendanceHistory = data;
+        _attendanceHistory = history;
       });
     } catch (e) {
       // Handle error silently or show message
+      debugPrint('Error loading attendance data: $e');
     }
   }
 
@@ -50,18 +64,39 @@ class _StudentScreenState extends State<StudentScreen>
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
 
-      final stats = await ApiService.getStudentStats(userId, null);
+      // Get student status (warnings/expulsion)
+      final status = await ApiService.checkStudentStatus(userId);
+
+      // Get attendance summary
+      final records = await ApiService.getStudentAttendance(userId);
+
+      // Calculate stats
+      int attended = 0;
+      int absences = 0;
+
+      for (var record in records) {
+        if (record['status'] == 'Present') {
+          attended++;
+        } else if (record['status'] == 'Absent') {
+          absences++;
+        }
+      }
+
       setState(() {
-        _sessionsAttended = stats['sessions_attended'] ?? 0;
-        _totalAbsences = stats['total_absences'] ?? 0;
+        _sessionsAttended = attended;
+        _totalAbsences = absences;
       });
 
-      // Load excluded courses
-      if (stats['is_excluded'] == true) {
-        // You can load excluded courses here if needed
+      // Check if student is excluded from any courses
+      if (status['warning'] != null) {
+        // Show warning but allow attendance
+      }
+      if (status['expelled'] == true) {
+        // Student is expelled from some courses
       }
     } catch (e) {
       // Handle error silently or show message
+      debugPrint('Error loading stats: $e');
     }
   }
 

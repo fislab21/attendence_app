@@ -1,2 +1,0 @@
-# Teacher routes package
-
