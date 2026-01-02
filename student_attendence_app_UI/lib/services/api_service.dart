@@ -306,7 +306,23 @@ class ApiService {
     final response = await _makeRequest(
       'GET',
       '/teacher.php/non-submitters',
-      queryParams: {'session_id': sessionId, 'user_id': teacherId}, // Backend accepts user_id
+      queryParams: {
+        'session_id': sessionId,
+        'user_id': teacherId,
+      }, // Backend accepts user_id
+    );
+
+    return List<Map<String, dynamic>>.from(response['data'] ?? []);
+  }
+
+  static Future<List<Map<String, dynamic>>> getSessionAttendance({
+    required String sessionId,
+    required String teacherId, // Can be either teacher_id or user_id
+  }) async {
+    final response = await _makeRequest(
+      'GET',
+      '/teacher.php/session-attendance',
+      queryParams: {'session_id': sessionId, 'user_id': teacherId},
     );
 
     return List<Map<String, dynamic>>.from(response['data'] ?? []);
@@ -470,7 +486,10 @@ class ApiService {
     final response = await _makeRequest(
       'POST',
       '/admin.php/assign-courses',
-      body: {'user_id': teacherId, 'course_ids': courseIds}, // Backend accepts user_id
+      body: {
+        'user_id': teacherId,
+        'course_ids': courseIds,
+      }, // Backend accepts user_id
     );
 
     // Handle case where backend returns an empty array or object

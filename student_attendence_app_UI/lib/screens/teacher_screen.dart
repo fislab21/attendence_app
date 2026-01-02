@@ -34,18 +34,23 @@ class _TeacherScreenState extends State<TeacherScreen> {
       if (userId == null) return;
 
       // Get active sessions from backend
-      final sessions = await ApiService.getActiveSessions(userId: userId.toString());
+      final sessions = await ApiService.getActiveSessions(
+        userId: userId.toString(),
+      );
 
       setState(() {
         _sessions.clear();
         _sessions.addAll(sessions);
-        
+
         // Update courses with session codes from database
         for (var session in sessions) {
           final courseIndex = _courses.indexWhere(
-            (c) => c['course_id'] == session['course_id'] || c['id'] == session['course_id'],
+            (c) =>
+                c['course_id'] == session['course_id'] ||
+                c['id'] == session['course_id'],
           );
-          if (courseIndex != -1 && session['status'] == 'Active') {
+          if (courseIndex != -1 &&
+              session['status']?.toLowerCase() == 'active') {
             _courses[courseIndex]['code'] = session['attendance_code'];
             _courses[courseIndex]['session_id'] = session['session_id'];
             _courses[courseIndex]['status'] = 'active';
@@ -69,7 +74,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
         _courses.clear();
         _courses.addAll(courses);
       });
-      
+
       // Reload active sessions to sync with courses
       await _loadActiveSessions();
     } catch (e) {
@@ -89,17 +94,62 @@ class _TeacherScreenState extends State<TeacherScreen> {
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
 
-      // Get non-submitted students for this session from backend
-      final students = await ApiService.getNonSubmitters(
+      // Get all students with attendance status for this session
+      final students = await ApiService.getSessionAttendance(
         sessionId: sessionId,
         teacherId: userId.toString(),
       );
 
+      debugPrint('=== LOADING STUDENTS ===');
+      debugPrint('Session ID: $sessionId');
+      debugPrint('Students received: ${students.length}');
+      for (var s in students) {
+        debugPrint(
+          'Student: ${s['student_id']} - ${s['name']} - ${s['attendance_status']}',
+        );
+      }
+
       setState(() {
         _students.clear();
         _students.addAll(students);
+
+        // Initialize attendance map with fetched data
+        // Ensure ALL students are in the map, even if they haven't submitted yet
+        final sessionData = <String, Map<String, dynamic>>{};
+        for (var student in students) {
+          // Use student_id (from API response) not id
+          final studentId = student['student_id'] ?? student['id'];
+
+          if (studentId == null) {
+            debugPrint('Warning: Student has no ID: $student');
+            continue;
+          }
+
+          // Determine status from backend or default to absent
+          String status = 'absent';
+          bool justified = false;
+
+          final attendanceStatus = (student['attendance_status'] ?? '')
+              .toLowerCase();
+          if (attendanceStatus == 'present') {
+            status = 'present';
+          } else if (attendanceStatus == 'justified') {
+            status = 'absent';
+            justified = true;
+          }
+
+          sessionData[studentId.toString()] = {
+            'status': status,
+            'justified': justified,
+          };
+        }
+        _attendanceMap[sessionId] = sessionData;
+        debugPrint(
+          'Attendance map for session $sessionId: ${sessionData.length} students',
+        );
       });
     } catch (e) {
+      debugPrint('Error loading students: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -110,7 +160,6 @@ class _TeacherScreenState extends State<TeacherScreen> {
       }
     }
   }
-
 
   String _formatSessionDateTime(String? dateString) {
     if (dateString == null || dateString.isEmpty) return 'TBA';
@@ -164,14 +213,14 @@ class _TeacherScreenState extends State<TeacherScreen> {
       final code = result['code'] as String?;
       final newSessionId = result['session_id'] as String?;
       final expirationTime = result['expiration_time'] as String?;
-      
+
       if (code == null || newSessionId == null) {
         throw Exception('Failed to generate session');
       }
 
       // Reload active sessions
       await _loadActiveSessions();
-      
+
       DateTime expiresAt;
       if (expirationTime != null) {
         try {
@@ -182,7 +231,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
       } else {
         expiresAt = DateTime.now().add(const Duration(minutes: 60));
       }
-      
+
       _loadStudentsForSession(newSessionId);
 
       if (!mounted) return;
@@ -255,7 +304,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
                   setState(() {
                     _currentCode = code;
                     _activeSessionId = sessionId;
-                    
+
                     // Update course with session info
                     final courseIndex = _courses.indexWhere(
                       (c) => (c['course_id'] ?? c['id']) == courseId,
@@ -333,19 +382,46 @@ class _TeacherScreenState extends State<TeacherScreen> {
         throw Exception('User not logged in');
       }
 
-      // Save all attendance records to backend
+      // Get the attendance map for this session
       final sessionAttendance = _attendanceMap[sessionId] ?? {};
 
-      for (var studentId in sessionAttendance.keys) {
-        final record = sessionAttendance[studentId];
+      // Save ALL students in the _students list
+      // If a student is not in sessionAttendance, mark them as Unjustified Absent
+      for (var student in _students) {
+        final studentId = student['student_id'] ?? student['id'];
+
+        if (studentId == null) {
+          debugPrint('Warning: Student has no ID, skipping: $student');
+          continue;
+        }
+
+        // Check if student has explicit attendance record
+        final record = sessionAttendance[studentId.toString()];
+
+        String newStatus = 'Unjustified'; // Default: Unjustified absent
+
         if (record != null) {
-          // Call backend API to update attendance
+          // Convert attendance status to database format
+          if (record['status'] == 'present') {
+            newStatus = 'Present';
+          } else if (record['status'] == 'absent') {
+            newStatus = (record['justified'] ?? false)
+                ? 'Justified'
+                : 'Unjustified';
+          }
+        }
+
+        // Call backend API to update/create attendance record
+        try {
           await ApiService.updateAttendanceRecord(
             teacherId: userId.toString(),
             sessionId: sessionId,
             studentId: studentId,
-            newStatus: record['status'] ?? 'Unjustified',
+            newStatus: newStatus,
           );
+        } catch (e) {
+          debugPrint('Error saving attendance for student $studentId: $e');
+          // Continue with next student instead of failing
         }
       }
 
@@ -370,12 +446,14 @@ class _TeacherScreenState extends State<TeacherScreen> {
           _currentCode = null;
           _activeSessionId = null;
         }
+        // Clear attendance data for this session
+        _attendanceMap.remove(sessionId);
       });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Session closed and saved to database'),
+          content: Text('Session closed and attendance saved to database'),
           backgroundColor: Colors.green,
         ),
       );
@@ -390,7 +468,12 @@ class _TeacherScreenState extends State<TeacherScreen> {
     }
   }
 
-  void _viewAttendanceList(String sessionId) {
+  void _viewAttendanceList(String sessionId) async {
+    // Load students before showing dialog
+    await _loadStudentsForSession(sessionId);
+
+    if (!mounted) return;
+
     showDialog(
       context: context,
       builder: (context) => _buildAttendanceDialog(sessionId),
@@ -401,112 +484,349 @@ class _TeacherScreenState extends State<TeacherScreen> {
     final sessionData = _attendanceMap[sessionId] ?? {};
 
     return AlertDialog(
-      title: const Text('Session Attendance'),
+      title: const Text('Manage Session Attendance'),
       content: SizedBox(
         width: double.maxFinite,
-        child: ListView.builder(
-          itemCount: _students.length,
-          itemBuilder: (context, index) {
-            final student = _students[index];
-            final studentId = student['id'];
-            final attendance =
-                sessionData[studentId] ??
-                {'status': 'absent', 'justified': false};
-
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8.0),
-              child: Card(
+        child: _students.isEmpty
+            ? Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(32),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      Icon(
+                        Icons.groups_outlined,
+                        size: 64,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 16),
                       Text(
-                        student['name'],
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              children: [
-                                const Text('Present'),
-                                Radio<String>(
-                                  value: 'present',
-                                  groupValue: attendance['status'],
-                                  onChanged: (value) {
-                                    setState(() {
-                                      sessionData[studentId] = {
-                                        'status': 'present',
-                                        'justified': false,
-                                      };
-                                    });
-                                    Navigator.pop(context);
-                                    _viewAttendanceList(sessionId);
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: Column(
-                              children: [
-                                const Text('Absent'),
-                                Radio<String>(
-                                  value: 'absent',
-                                  groupValue: attendance['status'],
-                                  onChanged: (value) {
-                                    setState(() {
-                                      sessionData[studentId] = {
-                                        'status': 'absent',
-                                        'justified':
-                                            attendance['justified'] ?? false,
-                                      };
-                                    });
-                                    Navigator.pop(context);
-                                    _viewAttendanceList(sessionId);
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      // Show justified checkbox only if absent
-                      if (attendance['status'] == 'absent') ...[
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Checkbox(
-                              value: attendance['justified'] ?? false,
-                              onChanged: (value) {
-                                setState(() {
-                                  sessionData[studentId] = {
-                                    'status': 'absent',
-                                    'justified': value ?? false,
-                                  };
-                                });
-                                Navigator.pop(context);
-                                _viewAttendanceList(sessionId);
-                              },
-                            ),
-                            const Expanded(child: Text('Justified Absence')),
-                          ],
+                        'No students enrolled',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
+              )
+            : ListView.builder(
+                itemCount: _students.length,
+                itemBuilder: (context, index) {
+                  final student = _students[index];
+                  final studentId = student['student_id'] ?? student['id'];
+                  final studentName = student['name'] ?? 'Unknown Student';
+                  final attendance =
+                      sessionData[studentId] ??
+                      {'status': 'absent', 'justified': false};
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Card(
+                      elevation: 2,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        studentName,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'ID: $studentId',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // Status badge
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: attendance['status'] == 'present'
+                                        ? Colors.green.withValues(alpha: 0.2)
+                                        : Colors.red.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    attendance['status']
+                                        .toString()
+                                        .toUpperCase(),
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: attendance['status'] == 'present'
+                                          ? Colors.green
+                                          : Colors.red,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // Attendance status selection
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        _attendanceMap[sessionId]![studentId] =
+                                            {
+                                              'status': 'present',
+                                              'justified': false,
+                                            };
+                                      });
+                                      Navigator.pop(context);
+                                      _viewAttendanceList(sessionId);
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                        horizontal: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: attendance['status'] == 'present'
+                                            ? Colors.green
+                                            : Colors.grey.shade300,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.check_circle,
+                                            color:
+                                                attendance['status'] ==
+                                                    'present'
+                                                ? Colors.white
+                                                : Colors.grey,
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Present',
+                                            style: TextStyle(
+                                              color:
+                                                  attendance['status'] ==
+                                                      'present'
+                                                  ? Colors.white
+                                                  : Colors.black,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        _attendanceMap[sessionId]![studentId] =
+                                            {
+                                              'status': 'absent',
+                                              'justified':
+                                                  attendance['justified'] ??
+                                                  false,
+                                            };
+                                      });
+                                      Navigator.pop(context);
+                                      _viewAttendanceList(sessionId);
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                        horizontal: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: attendance['status'] == 'absent'
+                                            ? Colors.red
+                                            : Colors.grey.shade300,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.cancel,
+                                            color:
+                                                attendance['status'] == 'absent'
+                                                ? Colors.white
+                                                : Colors.grey,
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Absent',
+                                            style: TextStyle(
+                                              color:
+                                                  attendance['status'] ==
+                                                      'absent'
+                                                  ? Colors.white
+                                                  : Colors.black,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            // Show absence type selector only if absent
+                            if (attendance['status'] == 'absent') ...[
+                              const SizedBox(height: 12),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.05),
+                                  border: Border.all(
+                                    color: Colors.orange.withValues(alpha: 0.3),
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                padding: const EdgeInsets.all(8),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _attendanceMap[sessionId]![studentId] =
+                                                {
+                                                  'status': 'absent',
+                                                  'justified': false,
+                                                };
+                                          });
+                                          Navigator.pop(context);
+                                          _viewAttendanceList(sessionId);
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                            horizontal: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                !(attendance['justified'] ??
+                                                    false)
+                                                ? Colors.orange
+                                                : Colors.transparent,
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Unjustified',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                              color:
+                                                  !(attendance['justified'] ??
+                                                      false)
+                                                  ? Colors.white
+                                                  : Colors.orange,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _attendanceMap[sessionId]![studentId] =
+                                                {
+                                                  'status': 'absent',
+                                                  'justified': true,
+                                                };
+                                          });
+                                          Navigator.pop(context);
+                                          _viewAttendanceList(sessionId);
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                            horizontal: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                (attendance['justified'] ??
+                                                    false)
+                                                ? Colors.blue
+                                                : Colors.transparent,
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Justified',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                              color:
+                                                  (attendance['justified'] ??
+                                                      false)
+                                                  ? Colors.white
+                                                  : Colors.blue,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-            );
-          },
-        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Done'),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            _saveAttendanceAndCloseSession(sessionId);
+            Navigator.pop(context);
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+          child: const Text('Save & Close Session'),
         ),
       ],
     );
@@ -642,7 +962,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      expiresAt != null 
+                      expiresAt != null
                           ? 'Valid until ${expiresAt.hour}:${expiresAt.minute.toString().padLeft(2, '0')}'
                           : 'Valid for this session',
                       style: TextStyle(color: Colors.grey.shade600),
@@ -856,8 +1176,8 @@ class _TeacherScreenState extends State<TeacherScreen> {
     }
 
     return _sessions.map((session) {
-      final isActive = session['status'] == 'active';
-      final isCompleted = session['status'] == 'completed';
+      final isActive = session['status']?.toLowerCase() == 'active';
+      final isCompleted = session['status']?.toLowerCase() == 'completed';
 
       return Card(
         margin: const EdgeInsets.only(bottom: 12),
@@ -904,7 +1224,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
                           ),
                         ),
                         Text(
-                          session['time']!,
+                          session['time'] ?? 'TBA',
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 14,
@@ -915,7 +1235,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
                   ),
                   Chip(
                     label: Text(
-                      session['status']!.toUpperCase(),
+                      (session['status'] ?? 'SCHEDULED').toUpperCase(),
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
@@ -955,7 +1275,13 @@ class _TeacherScreenState extends State<TeacherScreen> {
                   if (isActive) ...[
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: () => _viewAttendanceList(session['id']),
+                        onPressed: () {
+                          final sessionId =
+                              session['id'] ?? session['session_id'];
+                          if (sessionId != null) {
+                            _viewAttendanceList(sessionId);
+                          }
+                        },
                         icon: const Icon(Icons.list_alt, size: 18),
                         label: const Text('View List'),
                       ),
@@ -963,7 +1289,13 @@ class _TeacherScreenState extends State<TeacherScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () => _closeSession(session['id']),
+                        onPressed: () {
+                          final sessionId =
+                              session['id'] ?? session['session_id'];
+                          if (sessionId != null) {
+                            _closeSession(sessionId);
+                          }
+                        },
                         icon: const Icon(Icons.stop, size: 18),
                         label: const Text('Close'),
                         style: ElevatedButton.styleFrom(

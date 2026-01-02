@@ -372,6 +372,62 @@ else if ($action === 'courses' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     success('Courses retrieved', $courses);
 }
 
+// UC7 ALTERNATIVE: Get session attendance (all students with their status)
+else if ($action === 'session-attendance' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    
+    $session_id = isset($_GET['session_id']) ? sanitize($_GET['session_id']) : '';
+    $teacher_id = isset($_GET['teacher_id']) ? sanitize($_GET['teacher_id']) : '';
+    $user_id = isset($_GET['user_id']) ? sanitize($_GET['user_id']) : '';
+    
+    if (!$session_id) {
+        error('Session ID is required', 400);
+    }
+    
+    // If user_id is provided, get teacher_id from it
+    if ($user_id && !$teacher_id) {
+        $teacher = executeSelectOne("SELECT teacher_id FROM teachers WHERE user_id = '$user_id'");
+        if (!$teacher) {
+            error('User is not a teacher', 400);
+        }
+        $teacher_id = $teacher['teacher_id'];
+    }
+    
+    if (!$teacher_id) {
+        error('Teacher ID or User ID is required', 400);
+    }
+    
+    // Get course from session and verify teacher
+    $session = executeSelectOne("SELECT course_id FROM sessions WHERE session_id = '" . sanitize($session_id) . "'");
+    
+    if (!$session) {
+        error('Session not found', 404);
+    }
+    
+    if (!teacherTeachesCourse($teacher_id, $session['course_id'])) {
+        error('Not authorized', 403);
+    }
+    
+    $course_id = $session['course_id'];
+    
+    // Get all enrolled students with their attendance status
+    $sql = "SELECT cs.student_id, 
+                   COALESCE(u.full_name, u.username) as name,
+                   u.user_id,
+                   COALESCE(ar.attendance_status, 'absent') as attendance_status,
+                   ar.record_id,
+                   ar.submission_time
+            FROM course_students cs
+            JOIN students s ON cs.student_id = s.student_id
+            JOIN users u ON s.user_id = u.user_id
+            LEFT JOIN attendance_records ar ON cs.student_id = ar.student_id AND ar.session_id = '" . sanitize($session_id) . "'
+            WHERE cs.course_id = '" . sanitize($course_id) . "'
+            ORDER BY u.full_name";
+    
+    $students = executeSelect($sql);
+    
+    success('Session attendance retrieved', $students);
+}
+
 // UC7 ALTERNATIVE: Get non-submitters for a session
 else if ($action === 'non-submitters' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     

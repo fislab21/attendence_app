@@ -433,4 +433,57 @@ function studentEnrolledInCourse($student_id, $course_id) {
     return executeSelectOne($sql) !== null;
 }
 
+/**
+ * Ensure student exists in database - create if doesn't exist
+ * This allows non-enrolled students to mark attendance
+ */
+function ensureStudentExists($student_id) {
+    // Check if student already exists
+    $existing = executeSelectOne("SELECT student_id FROM students WHERE student_id = '" . sanitize($student_id) . "'");
+    
+    if ($existing !== null) {
+        return true; // Student already exists
+    }
+    
+    // Student doesn't exist - we need to create one
+    // Generate a unique user_id
+    $user_id = generateId('USR');
+    
+    // Create a minimal user record
+    $sql_user = "INSERT INTO users (user_id, username, email, password, user_type, account_status, full_name, created_at)
+                 VALUES (
+                     '" . sanitize($user_id) . "',
+                     '" . sanitize($student_id) . "',
+                     '" . sanitize($student_id . '@temporary.local') . "',
+                     'temp_password',
+                     'Student',
+                     'Active',
+                     '" . sanitize($student_id) . "',
+                     NOW()
+                 )";
+    
+    try {
+        executeInsertUpdateDelete($sql_user);
+    } catch (Exception $e) {
+        error('Failed to create user record: ' . $e->getMessage(), 500);
+    }
+    
+    // Create student record with correct schema
+    $sql_student = "INSERT INTO students (student_id, user_id, total_absences, justified_absences, unjustified_absences)
+                    VALUES (
+                        '" . sanitize($student_id) . "',
+                        '" . sanitize($user_id) . "',
+                        0,
+                        0,
+                        0
+                    )";
+    
+    try {
+        executeInsertUpdateDelete($sql_student);
+        return true;
+    } catch (Exception $e) {
+        error('Failed to create student record: ' . $e->getMessage(), 500);
+    }
+}
+
 ?>

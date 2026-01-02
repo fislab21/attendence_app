@@ -12,9 +12,10 @@ class UserHeader extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final String name = (user['name'] != null && (user['name']!.isNotEmpty))
-        ? user['name']!
-        : (user['username'] ?? '');
+    final String name =
+        (user['name'] != null && (user['name'] as String).isNotEmpty)
+        ? user['name'] as String
+        : (user['username'] ?? 'User');
     final String email = user['email'] ?? '';
     final String role = user['role'] ?? '';
 

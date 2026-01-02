@@ -11,17 +11,14 @@ class ProfileScreen extends StatelessWidget {
 
     if (user == null) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('Profile'),
-        ),
-        body: const Center(
-          child: Text('No user information available'),
-        ),
+        appBar: AppBar(title: const Text('Profile')),
+        body: const Center(child: Text('No user information available')),
       );
     }
 
-    final String name = (user['name'] != null && user['name']!.isNotEmpty)
-        ? user['name']!
+    final String name =
+        (user['name'] != null && (user['name'] as String).isNotEmpty)
+        ? user['name'] as String
         : (user['username'] ?? 'User');
     final String email = user['email'] ?? 'Not provided';
     final String username = user['username'] ?? '';
@@ -234,4 +231,3 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 }
-

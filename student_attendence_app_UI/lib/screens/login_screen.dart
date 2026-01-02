@@ -32,15 +32,19 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final response = await ApiService.login(username, password, _role);
       AuthService.setCurrentUser(
-        id: response['user_id'] ?? response['id'], // Use user_id if available, fallback to id
-        username: response['username'],
-        name: response['name'],
-        email: response['email'],
-        role: response['role'],
+        id:
+            response['user_id'] ??
+            response['id'] ??
+            '', // Use user_id if available, fallback to id
+        username:
+            response['username'] ?? username, // Fallback to entered username
+        name: response['name'] ?? '',
+        email: response['email'] ?? '',
+        role: response['role'] ?? _role, // Fallback to selected role
       );
-      
+
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/${response['role']}');
+      Navigator.pushReplacementNamed(context, '/${response['role'] ?? _role}');
     } catch (e) {
       if (!mounted) return;
       setState(() {
