@@ -24,7 +24,37 @@ class _TeacherScreenState extends State<TeacherScreen> {
   @override
   void initState() {
     super.initState();
+    // Load courses first, then sessions (sessions will be loaded after courses complete)
     _loadAssignedCourses();
+  }
+
+  Future<void> _loadActiveSessions() async {
+    try {
+      final userId = AuthService.currentUser?['id'];
+      if (userId == null) return;
+
+      // Get active sessions from backend
+      final sessions = await ApiService.getActiveSessions(userId: userId.toString());
+
+      setState(() {
+        _sessions.clear();
+        _sessions.addAll(sessions);
+        
+        // Update courses with session codes from database
+        for (var session in sessions) {
+          final courseIndex = _courses.indexWhere(
+            (c) => c['course_id'] == session['course_id'] || c['id'] == session['course_id'],
+          );
+          if (courseIndex != -1 && session['status'] == 'Active') {
+            _courses[courseIndex]['code'] = session['attendance_code'];
+            _courses[courseIndex]['session_id'] = session['session_id'];
+            _courses[courseIndex]['status'] = 'active';
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading active sessions: $e');
+    }
   }
 
   Future<void> _loadAssignedCourses() async {
@@ -32,24 +62,21 @@ class _TeacherScreenState extends State<TeacherScreen> {
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
 
-      // Get all sessions for the teacher from backend
-      final sessions = await ApiService.getTeacherSessions(userId);
+      // Get teacher's courses from backend
+      final courses = await ApiService.getTeacherCourses(userId.toString());
 
       setState(() {
         _courses.clear();
-        _courses.addAll(sessions);
-
-        // Initialize attendance tracking for each session
-        for (var session in sessions) {
-          final sessionId = session['id'];
-          _attendanceMap[sessionId] = {};
-        }
+        _courses.addAll(courses);
       });
+      
+      // Reload active sessions to sync with courses
+      await _loadActiveSessions();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading sessions: $e'),
+            content: Text('Error loading courses: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -59,8 +86,14 @@ class _TeacherScreenState extends State<TeacherScreen> {
 
   Future<void> _loadStudentsForSession(String sessionId) async {
     try {
-      // Get students enrolled in this session from backend
-      final students = await ApiService.getSessionStudents(sessionId);
+      final userId = AuthService.currentUser?['id'];
+      if (userId == null) return;
+
+      // Get non-submitted students for this session from backend
+      final students = await ApiService.getNonSubmitters(
+        sessionId: sessionId,
+        teacherId: userId.toString(),
+      );
 
       setState(() {
         _students.clear();
@@ -78,15 +111,6 @@ class _TeacherScreenState extends State<TeacherScreen> {
     }
   }
 
-  String _generateCode() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final random = DateTime.now().millisecondsSinceEpoch;
-    final code = StringBuffer();
-    for (int i = 0; i < 6; i++) {
-      code.write(chars[(random + i) % chars.length]);
-    }
-    return code.toString();
-  }
 
   String _formatSessionDateTime(String? dateString) {
     if (dateString == null || dateString.isEmpty) return 'TBA';
@@ -116,108 +140,157 @@ class _TeacherScreenState extends State<TeacherScreen> {
     return months[month - 1];
   }
 
-  void _startSession(String sessionId) {
-    _loadStudentsForSession(sessionId);
-
-    final code = _generateCode();
-    final expiresAt = DateTime.now().add(const Duration(hours: 2));
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.play_circle_outline, color: Colors.green),
-            SizedBox(width: 12),
-            Text('Session Started'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.green.shade200, width: 2),
-              ),
-              child: Column(
-                children: [
-                  const Text(
-                    'Attendance Code',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black54,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    code,
-                    style: const TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 4,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Valid until ${expiresAt.hour}:${expiresAt.minute.toString().padLeft(2, '0')}',
-                    style: TextStyle(color: Colors.grey.shade600),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Share this code with your students. Students can now mark their attendance.',
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+  void _startSession(String sessionId, String courseId) async {
+    try {
+      final userId = AuthService.currentUser?['id'];
+      if (userId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('User not logged in'),
+            backgroundColor: Colors.red,
           ),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                // Call backend API to start session
-                await ApiService.startSession(sessionId, code);
+        );
+        return;
+      }
 
+      // Generate session with API (saves to database)
+      final result = await ApiService.generateAttendanceSession(
+        teacherId: userId.toString(),
+        courseId: courseId,
+        durationMinutes: 60,
+        room: 'TBD',
+      );
+
+      final code = result['code'] as String?;
+      final newSessionId = result['session_id'] as String?;
+      final expirationTime = result['expiration_time'] as String?;
+      
+      if (code == null || newSessionId == null) {
+        throw Exception('Failed to generate session');
+      }
+
+      // Reload active sessions
+      await _loadActiveSessions();
+      
+      DateTime expiresAt;
+      if (expirationTime != null) {
+        try {
+          expiresAt = DateTime.parse(expirationTime);
+        } catch (e) {
+          expiresAt = DateTime.now().add(const Duration(minutes: 60));
+        }
+      } else {
+        expiresAt = DateTime.now().add(const Duration(minutes: 60));
+      }
+      
+      _loadStudentsForSession(newSessionId);
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.play_circle_outline, color: Colors.green),
+              SizedBox(width: 12),
+              Text('Session Started'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.shade200, width: 2),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Attendance Code',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      code,
+                      style: const TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 4,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Valid until ${expiresAt.hour}:${expiresAt.minute.toString().padLeft(2, '0')}',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Share this code with your students. Students can now mark their attendance.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () {
                 if (mounted) {
                   setState(() {
                     _currentCode = code;
                     _activeSessionId = sessionId;
+                    
+                    // Update course with session info
+                    final courseIndex = _courses.indexWhere(
+                      (c) => (c['course_id'] ?? c['id']) == courseId,
+                    );
+                    if (courseIndex != -1) {
+                      _courses[courseIndex]['code'] = code;
+                      _courses[courseIndex]['session_id'] = sessionId;
+                      _courses[courseIndex]['status'] = 'active';
+                    }
                   });
 
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Session started successfully'),
+                      content: Text('Session started and saved to database'),
                       backgroundColor: Colors.green,
                     ),
                   );
                 }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error starting session: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              }
-            },
-            child: const Text('Start Session'),
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating session: $e'),
+            backgroundColor: Colors.red,
           ),
-        ],
-      ),
-    );
+        );
+      }
+    }
   }
 
   void _closeSession(String sessionId) {
@@ -255,6 +328,11 @@ class _TeacherScreenState extends State<TeacherScreen> {
 
   Future<void> _saveAttendanceAndCloseSession(String sessionId) async {
     try {
+      final userId = AuthService.currentUser?['id'];
+      if (userId == null) {
+        throw Exception('User not logged in');
+      }
+
       // Save all attendance records to backend
       final sessionAttendance = _attendanceMap[sessionId] ?? {};
 
@@ -262,23 +340,31 @@ class _TeacherScreenState extends State<TeacherScreen> {
         final record = sessionAttendance[studentId];
         if (record != null) {
           // Call backend API to update attendance
-          await ApiService.updateAttendanceStatus(
-            sessionId,
-            studentId,
-            record['status'] ?? 'absent',
-            justified: (record['justified'] == true) ? 1 : 0,
+          await ApiService.updateAttendanceRecord(
+            teacherId: userId.toString(),
+            sessionId: sessionId,
+            studentId: studentId,
+            newStatus: record['status'] ?? 'Unjustified',
           );
         }
       }
 
-      // Close session on backend
+      // Close session in database
       await ApiService.closeSession(sessionId);
 
+      // Reload active sessions
+      await _loadActiveSessions();
+
       // Update local state
-      final courseIndex = _courses.indexWhere((c) => c['id'] == sessionId);
       setState(() {
-        if (courseIndex != -1) {
-          _courses[courseIndex]['status'] = 'completed';
+        // Find and update course with this session
+        for (var course in _courses) {
+          if (course['session_id'] == sessionId) {
+            course['code'] = null;
+            course['session_id'] = null;
+            course['status'] = 'completed';
+            break;
+          }
         }
         if (_activeSessionId == sessionId) {
           _currentCode = null;
@@ -289,7 +375,7 @@ class _TeacherScreenState extends State<TeacherScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Session closed and attendance saved to database'),
+          content: Text('Session closed and saved to database'),
           backgroundColor: Colors.green,
         ),
       );
@@ -457,10 +543,60 @@ class _TeacherScreenState extends State<TeacherScreen> {
 
   Future<void> _createSession(Map<String, dynamic> course) async {
     try {
-      final code = _generateCode();
+      final userId = AuthService.currentUser?['id'];
+      if (userId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('User not logged in'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
 
-      // Show dialog with the code
+      final courseId = course['course_id'] ?? course['id'];
+      if (courseId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Course ID not found'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Generate session with API (saves to database)
+      final result = await ApiService.generateAttendanceSession(
+        teacherId: userId.toString(),
+        courseId: courseId,
+        durationMinutes: 60, // Set to 60 minutes or make it configurable
+        room: 'TBD',
+      );
+
+      final code = result['code'] as String?;
+      final sessionId = result['session_id'] as String?;
+      final expirationTime = result['expiration_time'] as String?;
+
+      if (code == null || sessionId == null) {
+        throw Exception('Failed to generate session');
+      }
+
+      // Reload active sessions to get the latest data
+      await _loadActiveSessions();
+
       if (!mounted) return;
+
+      // Parse expiration time
+      DateTime? expiresAt;
+      if (expirationTime != null) {
+        try {
+          expiresAt = DateTime.parse(expirationTime);
+        } catch (e) {
+          expiresAt = DateTime.now().add(const Duration(minutes: 60));
+        }
+      } else {
+        expiresAt = DateTime.now().add(const Duration(minutes: 60));
+      }
 
       showDialog(
         context: context,
@@ -506,7 +642,9 @@ class _TeacherScreenState extends State<TeacherScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Valid for this session',
+                      expiresAt != null 
+                          ? 'Valid until ${expiresAt.hour}:${expiresAt.minute.toString().padLeft(2, '0')}'
+                          : 'Valid for this session',
                       style: TextStyle(color: Colors.grey.shade600),
                     ),
                   ],
@@ -802,7 +940,10 @@ class _TeacherScreenState extends State<TeacherScreen> {
                   if (!isCompleted && !isActive)
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () => _startSession(session['id']),
+                        onPressed: () => _startSession(
+                          session['id'],
+                          session['course_id'] ?? '',
+                        ),
                         icon: const Icon(Icons.play_arrow, size: 18),
                         label: const Text('Start Session'),
                         style: ElevatedButton.styleFrom(

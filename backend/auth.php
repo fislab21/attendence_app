@@ -1,70 +1,92 @@
 <?php
+/**
+ * AUTHENTICATION API
+ * UC1: Login
+ */
+
 include 'config.php';
 
-// Get action from URL
-$action = isset($_GET['action']) ? $_GET['action'] : '';
+// Handle OPTIONS request for CORS
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
 
-// LOGIN
-if ($action == 'login') {
-    // Get data from app
+// Get action from URL path
+$request_uri = trim($_SERVER['PATH_INFO'] ?? '', '/');
+$parts = explode('/', $request_uri);
+$action = $parts[0] ?? '';
+
+// ===========================
+// UC1: LOGIN
+// ===========================
+if ($action === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+
     $data = json_decode(file_get_contents("php://input"), true);
-    
-    // Validate required fields
     validateRequired($data, ['username', 'password', 'role']);
-    
+
     $username = sanitize($data['username']);
-    $password = sanitize($data['password']);
-    $role = sanitize($data['role']);
-    
-    // Normalize role to match database enum
-    $role = ucfirst(strtolower($role)); // Convert to 'Student', 'Teacher', 'Admin'
-    if (!in_array($role, ['Student', 'Teacher', 'Admin'])) {
-        error('Invalid role. Must be Student, Teacher, or Admin', 400);
-    }
-    
-    // Check if user exists with this username and type
-    $sql = "SELECT user_id, username, email, full_name, user_type, account_status 
-            FROM users 
-            WHERE username = '$username' AND user_type = '$role' AND account_status = 'Active'";
-    
+    $password = $data['password'];
+    $role = ucfirst(strtolower($data['role']));
+
+    validateRole($role);
+
+    // Fetch user including password hash
+    $sql = "SELECT user_id, username, password, email, full_name, user_type, account_status
+            FROM users
+            WHERE username = '" . sanitize($username) . "'
+              AND user_type = '" . sanitize($role) . "'";
+
     $user = executeSelectOne($sql);
-    
+
+    // ❌ Invalid credentials
     if (!$user) {
         error('Invalid username, password, or role', 401);
     }
-    
-    // Check password (in production, use password_verify())
-    if ($user['password'] !== $password) {
+
+    // ❌ Account suspended
+    if ($user['account_status'] === 'Suspended') {
+        error('Your account has been suspended. Contact administrator.', 403);
+    }
+
+    // ❌ Account deleted
+    if ($user['account_status'] === 'Deleted') {
+        error('Your account has been deleted.', 403);
+    }
+
+    // ✅ VERIFY PASSWORD
+    if (!password_verify($password, $user['password'])) {
         error('Invalid username, password, or role', 401);
     }
-    
-    // Get role-specific ID (student_id, teacher_id, or admin_id)
-    $role_id = null;
+
+    // ✅ SUCCESS → update last login
+    executeInsertUpdateDelete("
+        UPDATE users 
+        SET last_login = NOW()
+        WHERE user_id = '{$user['user_id']}'
+    ");
+
+    // Fetch role-specific ID
     $role_table = '';
-    
+    $id_field = '';
+
     if ($role === 'Student') {
         $role_table = 'students';
         $id_field = 'student_id';
-    } else if ($role === 'Teacher') {
+    } elseif ($role === 'Teacher') {
         $role_table = 'teachers';
         $id_field = 'teacher_id';
-    } else if ($role === 'Admin') {
+    } elseif ($role === 'Admin') {
         $role_table = 'admins';
         $id_field = 'admin_id';
     }
-    
-    $role_sql = "SELECT $id_field FROM $role_table WHERE user_id = '{$user['user_id']}'";
-    $role_record = executeSelectOne($role_sql);
-    
-    if ($role_record) {
-        $role_id = $role_record[$id_field];
+
+    $role_id = null;
+    if ($role_table) {
+        $r = executeSelectOne("SELECT $id_field FROM $role_table WHERE user_id = '{$user['user_id']}'");
+        $role_id = $r[$id_field] ?? null;
     }
-    
-    // Update last login
-    $update_sql = "UPDATE users SET last_login = NOW() WHERE user_id = '{$user['user_id']}'";
-    executeInsertUpdateDelete($update_sql);
-    
-    // Return success with user data
+
     success('Login successful', [
         'id' => $role_id ?? $user['user_id'],
         'user_id' => $user['user_id'],
@@ -73,7 +95,12 @@ if ($action == 'login') {
         'email' => $user['email'],
         'role' => strtolower($role)
     ]);
-} else {
-    error('Invalid action', 400);
+}
+
+// ===========================
+// INVALID ROUTE
+// ===========================
+else {
+    error('Invalid action. Use POST /auth.php/login', 400);
 }
 ?>

@@ -32,7 +32,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final response = await ApiService.login(username, password, _role);
       AuthService.setCurrentUser(
-        id: response['id'],
+        id: response['user_id'] ?? response['id'], // Use user_id if available, fallback to id
         username: response['username'],
         name: response['name'],
         email: response['email'],

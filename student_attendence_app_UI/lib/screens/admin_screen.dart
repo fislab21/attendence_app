@@ -163,29 +163,29 @@ class _AdminScreenState extends State<AdminScreen> {
 
                   try {
                     // Call backend API to create user
-                    final response = await ApiService.createUser(
-                      usernameController.text.trim(),
-                      passwordController.text.trim(),
-                      nameController.text.trim().split(' ').first,
-                      nameController.text.trim().split(' ').last,
-                      emailController.text.trim(),
-                      selectedRole,
+                    await ApiService.createUser(
+                      username: usernameController.text.trim(),
+                      email: emailController.text.trim(),
+                      fullName: nameController.text.trim(),
+                      userType: selectedRole.isEmpty
+                          ? 'Student'
+                          : selectedRole[0].toUpperCase() +
+                                selectedRole.substring(1),
+                      password: passwordController.text.trim(),
                     );
 
                     if (!mounted) return;
 
-                    if (response['success'] == true) {
-                      Navigator.pop(context);
-                      if (!mounted) return;
-                      await _loadUsers();
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Account created successfully'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
+                    Navigator.pop(context);
+                    if (!mounted) return;
+                    await _loadUsers();
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Account created successfully'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
                   } catch (e) {
                     if (!mounted) return;
                     setDialogState(
@@ -207,7 +207,9 @@ class _AdminScreenState extends State<AdminScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Account'),
-        content: Text('Are you sure you want to delete ${user['name']}?'),
+        content: Text(
+          'Are you sure you want to delete ${user['full_name'] ?? user['name'] ?? 'this user'}?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -218,25 +220,28 @@ class _AdminScreenState extends State<AdminScreen> {
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
-              setState(() {
-                final index = _users.indexWhere((u) => u['id'] == user['id']);
-                if (index != -1) {
-                  _users[index] = {..._users[index], 'status': 'deleted'};
-                }
-              });
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Account deleted successfully'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-              Future.delayed(const Duration(milliseconds: 500), () {
-                if (mounted) {
-                  _manageAccounts();
-                }
-              });
+            onPressed: () async {
+              try {
+                await ApiService.deleteUser(user['user_id'] ?? user['id']);
+                if (!mounted) return;
+                Navigator.pop(context);
+                await _loadUsers();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Account deleted successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error: ${e.toString()}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
             },
             child: const Text('Delete'),
           ),
@@ -246,23 +251,48 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   void _reinstateAccount(Map<String, dynamic> user) {
-    setState(() {
-      final index = _users.indexWhere((u) => u['id'] == user['id']);
-      if (index != -1) {
-        _users[index] = {..._users[index], 'status': 'active'};
-      }
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Account reinstated successfully'),
-        backgroundColor: Colors.green,
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reinstate Account'),
+        content: Text(
+          'Are you sure you want to reinstate ${user['full_name'] ?? user['name'] ?? 'this user'}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () async {
+              try {
+                await ApiService.reinstateUser(user['user_id'] ?? user['id']);
+                if (!mounted) return;
+                Navigator.pop(context);
+                await _loadUsers();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Account reinstated successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error: ${e.toString()}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Reinstate'),
+          ),
+        ],
       ),
     );
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        _manageAccounts();
-      }
-    });
   }
 
   void _viewUserDetails(Map<String, dynamic> user) {
@@ -275,7 +305,7 @@ class _AdminScreenState extends State<AdminScreen> {
             CircleAvatar(
               backgroundColor: Colors.blue.shade100,
               child: Text(
-                user['name'][0].toUpperCase(),
+                (user['full_name'] ?? user['name'] ?? 'U')[0].toUpperCase(),
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.blue,
@@ -287,9 +317,9 @@ class _AdminScreenState extends State<AdminScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(user['name'], style: const TextStyle(fontSize: 18)),
+                  Text(user['full_name'], style: const TextStyle(fontSize: 18)),
                   Text(
-                    user['role'].toString().toUpperCase(),
+                    user['user_type'].toString().toUpperCase(),
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey.shade600,
@@ -306,7 +336,7 @@ class _AdminScreenState extends State<AdminScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildInfoRow(Icons.badge, 'User ID', user['id']),
+              _buildInfoRow(Icons.badge, 'User ID', user['user_id']),
               const Divider(height: 24),
               _buildInfoRow(Icons.person_outline, 'Username', user['username']),
               const Divider(height: 24),
@@ -319,8 +349,8 @@ class _AdminScreenState extends State<AdminScreen> {
               _buildInfoRow(
                 Icons.verified_user,
                 'Status',
-                user['status'] == 'active' ? 'Active' : 'Deleted',
-                statusColor: user['status'] == 'active'
+                user['account_status'] == 'Active' ? 'Active' : 'Deleted',
+                statusColor: user['account_status'] == 'Active'
                     ? Colors.green
                     : Colors.red,
               ),
@@ -328,7 +358,7 @@ class _AdminScreenState extends State<AdminScreen> {
               _buildInfoRow(
                 Icons.school,
                 'Role',
-                user['role'].toString().toUpperCase(),
+                user['user_type'].toString().toUpperCase(),
               ),
             ],
           ),
@@ -416,7 +446,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   itemCount: _users.length,
                   itemBuilder: (context, index) {
                     final user = _users[index];
-                    final isDeleted = user['status'] == 'deleted';
+                    final isDeleted = user['account_status'] == 'Deleted';
                     return Card(
                       margin: const EdgeInsets.only(bottom: 8),
                       color: isDeleted ? Colors.grey.shade100 : null,
@@ -426,7 +456,7 @@ class _AdminScreenState extends State<AdminScreen> {
                               ? Colors.grey.shade300
                               : Colors.blue.shade100,
                           child: Text(
-                            user['name'][0].toUpperCase(),
+                            user['full_name'][0].toUpperCase(),
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: isDeleted
@@ -436,7 +466,7 @@ class _AdminScreenState extends State<AdminScreen> {
                           ),
                         ),
                         title: Text(
-                          user['name'] ?? user['username'],
+                          user['full_name'] ?? user['username'],
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
                             decoration: isDeleted
@@ -449,7 +479,7 @@ class _AdminScreenState extends State<AdminScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '${user['username']} • ${user['role']}',
+                              '${user['username']} • ${user['user_type']}',
                               style: TextStyle(
                                 color: isDeleted ? Colors.grey : null,
                               ),
@@ -481,7 +511,7 @@ class _AdminScreenState extends State<AdminScreen> {
                             ),
                             PopupMenuButton<String>(
                               itemBuilder: (context) => [
-                                if (user['status'] == 'active')
+                                if (user['account_status'] == 'Active')
                                   const PopupMenuItem(
                                     value: 'delete',
                                     child: Row(
@@ -543,7 +573,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
   void _assignCoursesToTeacher() {
     final teachers = _users
-        .where((u) => u['role'] == 'teacher' && u['status'] == 'active')
+        .where((u) => u['user_type'] == 'Teacher' && u['account_status'] == 'Active')
         .toList();
 
     if (teachers.isEmpty) {
@@ -565,8 +595,8 @@ class _AdminScreenState extends State<AdminScreen> {
         builder: (context, setDialogState) {
           final currentAssignments = selectedTeacher != null
               ? _courseAssignments
-                    .where((a) => a['teacherId'] == selectedTeacher!['id'])
-                    .map((a) => a['courseId'] as String)
+                    .where((a) => a['teacher_user_id'] == selectedTeacher!['user_id'])
+                    .map((a) => a['course_id'] as String)
                     .toSet()
               : <String>{};
 
@@ -606,7 +636,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       items: teachers.map((teacher) {
                         return DropdownMenuItem(
                           value: teacher,
-                          child: Text(teacher['name']),
+                          child: Text(teacher['full_name'] ?? teacher['username'] ?? 'Unknown'),
                         );
                       }).toList(),
                       onChanged: (value) {
@@ -669,7 +699,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       const SizedBox(height: 12),
                       ..._courses.map((course) {
                         final isCurrentlyAssigned = currentAssignments.contains(
-                          course['id'],
+                          course['course_id'],
                         );
                         return Card(
                           margin: const EdgeInsets.only(bottom: 8),
@@ -678,7 +708,7 @@ class _AdminScreenState extends State<AdminScreen> {
                               : null,
                           child: CheckboxListTile(
                             title: Text(
-                              course['name'],
+                              course['course_name'] ?? course['name'] ?? 'Unknown',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                               ),
@@ -686,7 +716,7 @@ class _AdminScreenState extends State<AdminScreen> {
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(course['code'] ?? 'N/A'),
+                                Text(course['course_code'] ?? course['code'] ?? 'N/A'),
                                 if (isCurrentlyAssigned)
                                   Text(
                                     'Currently assigned',
@@ -698,13 +728,15 @@ class _AdminScreenState extends State<AdminScreen> {
                                   ),
                               ],
                             ),
-                            value: selectedCourses.contains(course['id']),
+                            value: selectedCourses.contains(course['course_id'] ?? course['id'] ?? ''),
                             onChanged: (bool? checked) {
                               setDialogState(() {
+                                final courseId = course['course_id'] ?? course['id'] ?? '';
+                                if (courseId.isEmpty) return;
                                 if (checked == true) {
-                                  selectedCourses.add(course['id']);
+                                  selectedCourses.add(courseId);
                                 } else {
-                                  selectedCourses.remove(course['id']);
+                                  selectedCourses.remove(courseId);
                                 }
                               });
                             },
@@ -724,39 +756,23 @@ class _AdminScreenState extends State<AdminScreen> {
               ElevatedButton(
                 onPressed: selectedTeacher == null || selectedCourses.isEmpty
                     ? null
-                    : () async {
+                      : () async {
                         try {
-                          // Call backend API to assign courses
+                          // Call backend API to assign courses (backend accepts user_id)
                           await ApiService.assignCoursesToTeacher(
-                            selectedTeacher!['id'],
-                            selectedCourses.toList(),
+                            teacherId: selectedTeacher!['user_id'],
+                            courseIds: selectedCourses.toList(),
                           );
 
-                          // Update local state only after successful API call
-                          _courseAssignments.removeWhere(
-                            (a) => a['teacherId'] == selectedTeacher!['id'],
-                          );
-
-                          for (final courseId in selectedCourses) {
-                            _courseAssignments.add({
-                              'id':
-                                  DateTime.now().millisecondsSinceEpoch
-                                      .toString() +
-                                  courseId,
-                              'teacherId': selectedTeacher!['id'],
-                              'courseId': courseId,
-                              'assignedAt': DateTime.now(),
-                            });
-                          }
-
-                          setState(() {});
+                          // Reload assignments from backend
+                          await _loadAssignments();
 
                           if (!mounted) return;
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
-                                '${selectedCourses.length} course(s) assigned to ${selectedTeacher!['name']}',
+                                '${selectedCourses.length} course(s) assigned to ${selectedTeacher!['full_name'] ?? selectedTeacher!['username'] ?? 'teacher'}',
                               ),
                               backgroundColor: Colors.green,
                             ),
@@ -823,18 +839,22 @@ class _AdminScreenState extends State<AdminScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: () {
-                      final Map<String, List<Map<String, dynamic>>>
-                      groupedAssignments = {};
+                    final Map<String, List<Map<String, dynamic>>>
+                    groupedAssignments = {};
 
                       for (final assignment in _courseAssignments) {
-                        final teacherId = assignment['teacherId'] as String;
-                        groupedAssignments.putIfAbsent(teacherId, () => []);
-                        groupedAssignments[teacherId]!.add(assignment);
+                        final teacherUserId = assignment['teacher_user_id'] ?? assignment['teacherId'];
+                        if (teacherUserId != null) {
+                          groupedAssignments.putIfAbsent(teacherUserId.toString(), () => []);
+                          groupedAssignments[teacherUserId.toString()]!.add(assignment);
+                        }
                       }
 
                       return groupedAssignments.entries.map((entry) {
+                        final teacherUserId = entry.key;
                         final teacher = _users.firstWhere(
-                          (u) => u['id'] == entry.key,
+                          (u) => u['user_id'] == teacherUserId,
+                          orElse: () => {'full_name': 'Unknown Teacher', 'username': 'unknown'},
                         );
                         final assignments = entry.value;
 
@@ -849,7 +869,7 @@ class _AdminScreenState extends State<AdminScreen> {
                               ),
                             ),
                             title: Text(
-                              teacher['name'],
+                              teacher['full_name'] ?? teacher['username'] ?? 'Unknown',
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                               ),
@@ -859,40 +879,58 @@ class _AdminScreenState extends State<AdminScreen> {
                             ),
                             children: assignments.map((assignment) {
                               final course = _courses.firstWhere(
-                                (c) => c['id'] == assignment['courseId'],
+                                (c) => (c['course_id'] ?? c['id']) == (assignment['course_id'] ?? assignment['courseId']),
+                                orElse: () => {'course_name': 'Unknown Course', 'course_code': 'N/A'},
                               );
                               return ListTile(
                                 dense: true,
                                 leading: const Icon(Icons.book, size: 20),
-                                title: Text(course['name']),
-                                subtitle: Text(course['code'] ?? 'N/A'),
+                                title: Text(course['course_name'] ?? course['name'] ?? 'Unknown'),
+                                subtitle: Text(course['course_code'] ?? course['code'] ?? 'N/A'),
                                 trailing: IconButton(
                                   icon: const Icon(
                                     Icons.delete,
                                     color: Colors.red,
                                     size: 20,
                                   ),
-                                  onPressed: () {
-                                    setState(() {
-                                      _courseAssignments.removeWhere(
-                                        (a) => a['id'] == assignment['id'],
+                                  onPressed: () async {
+                                    try {
+                                      // Backend remove-assignment expects teacher_id from teacher_courses table
+                                      final teacherId = assignment['teacher_id'];
+                                      final courseId = assignment['course_id'];
+                                      if (teacherId == null || courseId == null) {
+                                        throw Exception('Missing teacher_id or course_id');
+                                      }
+                                      await ApiService.removeTeacherCourseAssignment(
+                                        teacherId: teacherId,
+                                        courseId: courseId,
                                       );
-                                    });
-                                    Navigator.pop(context);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Course assignment removed',
+                                      await _loadAssignments();
+                                      if (!mounted) return;
+                                      Navigator.pop(context);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Course assignment removed',
+                                          ),
+                                          backgroundColor: Colors.green,
                                         ),
-                                        backgroundColor: Colors.green,
-                                      ),
-                                    );
-                                    Future.delayed(
-                                      const Duration(milliseconds: 300),
-                                      () {
-                                        if (mounted) _viewCourseAssignments();
-                                      },
-                                    );
+                                      );
+                                      Future.delayed(
+                                        const Duration(milliseconds: 300),
+                                        () {
+                                          if (mounted) _viewCourseAssignments();
+                                        },
+                                      );
+                                    } catch (e) {
+                                      if (!mounted) return;
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Error removing assignment: $e'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                    }
                                   },
                                 ),
                               );
@@ -1163,8 +1201,8 @@ class _AdminScreenState extends State<AdminScreen> {
                         value: _users
                             .where(
                               (u) =>
-                                  u['role'] == 'student' &&
-                                  u['status'] == 'active',
+                                  u['user_type'] == 'Student' &&
+                                  u['account_status'] == 'Active',
                             )
                             .length
                             .toString(),
@@ -1176,8 +1214,8 @@ class _AdminScreenState extends State<AdminScreen> {
                         value: _users
                             .where(
                               (u) =>
-                                  u['role'] == 'teacher' &&
-                                  u['status'] == 'active',
+                                  u['user_type'] == 'Teacher' &&
+                                  u['account_status'] == 'Active',
                             )
                             .length
                             .toString(),
@@ -1195,8 +1233,8 @@ class _AdminScreenState extends State<AdminScreen> {
                         value: _users
                             .where(
                               (u) =>
-                                  u['role'] == 'admin' &&
-                                  u['status'] == 'active',
+                                  u['user_type'] == 'Admin' &&
+                                  u['account_status'] == 'Active',
                             )
                             .length
                             .toString(),

@@ -37,16 +37,31 @@ class _StudentScreenState extends State<StudentScreen>
       if (userId == null) return;
 
       // Get attendance records from backend
-      final records = await ApiService.getStudentAttendance(userId);
+      final result = await ApiService.getStudentAttendanceHistory(
+        studentId: userId.toString(),
+      );
 
-      // Transform data for display
+      // Transform data for display - using correct backend field names
+      final records = result['attendance_records'] ?? [];
       final history = records.map<Map<String, dynamic>>((record) {
+        // Parse the start_time from backend to get date and time
+        final startTime = record['start_time'] ?? '';
+        final dateTime = startTime.isNotEmpty
+            ? DateTime.tryParse(startTime)
+            : null;
+        final date = dateTime != null
+            ? '${dateTime.day}/${dateTime.month}/${dateTime.year}'
+            : 'N/A';
+        final time = dateTime != null
+            ? '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}'
+            : 'N/A';
+
         return {
           'course': record['course_name'] ?? 'Unknown Course',
-          'date': record['date'] ?? '',
-          'time': record['time'] ?? '',
-          'code': record['code'] ?? '',
-          'status': record['status'] ?? 'Present',
+          'date': date,
+          'time': time,
+          'code': record['course_code'] ?? '',
+          'status': record['attendance_status'] ?? 'Present',
         };
       }).toList();
 
@@ -64,35 +79,33 @@ class _StudentScreenState extends State<StudentScreen>
       final userId = AuthService.currentUser?['id'];
       if (userId == null) return;
 
-      // Get student status (warnings/expulsion)
-      final status = await ApiService.checkStudentStatus(userId);
+      // Get attendance history with stats
+      final result = await ApiService.getStudentAttendanceHistory(
+        studentId: userId.toString(),
+      );
 
-      // Get attendance summary
-      final records = await ApiService.getStudentAttendance(userId);
+      // Extract stats - using correct backend field names
+      final stats = result['stats'] ?? {};
+      final warnings = result['warnings'] ?? [];
+      final exclusions = result['exclusions'] ?? [];
 
-      // Calculate stats
-      int attended = 0;
-      int absences = 0;
-
-      for (var record in records) {
-        if (record['status'] == 'Present') {
-          attended++;
-        } else if (record['status'] == 'Absent') {
-          absences++;
-        }
-      }
+      // Calculate stats from backend response
+      int attended = stats['present'] ?? 0;
+      int absences =
+          (stats['unjustified_absences'] ?? 0) +
+          (stats['justified_absences'] ?? 0);
 
       setState(() {
         _sessionsAttended = attended;
         _totalAbsences = absences;
       });
 
-      // Check if student is excluded from any courses
-      if (status['warning'] != null) {
+      // Check if student has warnings or exclusions
+      if (warnings.isNotEmpty) {
         // Show warning but allow attendance
       }
-      if (status['expelled'] == true) {
-        // Student is expelled from some courses
+      if (exclusions.isNotEmpty) {
+        // Student is excluded from some courses
       }
     } catch (e) {
       // Handle error silently or show message
@@ -119,7 +132,7 @@ class _StudentScreenState extends State<StudentScreen>
         return;
       }
 
-      await ApiService.markAttendance(code, userId);
+      await ApiService.submitAttendanceCode(userId.toString(), code);
       setState(() {
         _isSubmitting = false;
         _sessionsAttended++;
