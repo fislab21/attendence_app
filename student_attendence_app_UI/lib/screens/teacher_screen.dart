@@ -92,7 +92,14 @@ class _TeacherScreenState extends State<TeacherScreen> {
   Future<void> _loadStudentsForSession(String sessionId) async {
     try {
       final userId = AuthService.currentUser?['id'];
-      if (userId == null) return;
+      if (userId == null) {
+        debugPrint('ERROR: No user logged in');
+        return;
+      }
+
+      debugPrint('=== LOADING STUDENTS ===');
+      debugPrint('Session ID: $sessionId');
+      debugPrint('User ID: $userId');
 
       // Get all students with attendance status for this session
       final students = await ApiService.getSessionAttendance(
@@ -100,9 +107,8 @@ class _TeacherScreenState extends State<TeacherScreen> {
         teacherId: userId.toString(),
       );
 
-      debugPrint('=== LOADING STUDENTS ===');
-      debugPrint('Session ID: $sessionId');
-      debugPrint('Students received: ${students.length}');
+      debugPrint('API RESPONSE: Students received: ${students.length}');
+      debugPrint('Raw students list: $students');
       for (var s in students) {
         debugPrint(
           'Student: ${s['student_id']} - ${s['name']} - ${s['attendance_status']}',
@@ -342,37 +348,126 @@ class _TeacherScreenState extends State<TeacherScreen> {
     }
   }
 
-  void _closeSession(String sessionId) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.orange),
-            SizedBox(width: 12),
-            Text('Close Session'),
+  void _closeSession(String sessionId) async {
+    try {
+      // First, load all students for this session
+      await _loadStudentsForSession(sessionId);
+
+      if (!mounted) return;
+
+      // Second, create absence records for students who don't have any record yet
+      final userId = AuthService.currentUser?['id'];
+      if (userId != null) {
+        debugPrint('=== CREATING ABSENCE RECORDS ===');
+        for (var student in _students) {
+          final studentId = student['student_id'] ?? student['id'];
+          final recordId = student['record_id'];
+
+          // Only create records for students who don't have one
+          if (studentId != null && recordId == null) {
+            debugPrint('Creating absence record for student: $studentId');
+            try {
+              await ApiService.updateAttendanceRecord(
+                teacherId: userId.toString(),
+                sessionId: sessionId,
+                studentId: studentId.toString(),
+                newStatus: 'Unjustified',
+              );
+              debugPrint('Successfully created record for $studentId');
+            } catch (e) {
+              debugPrint('Error creating record for $studentId: $e');
+              // Continue even if one fails
+            }
+          }
+        }
+
+        // Reload students to get the newly created records
+        await _loadStudentsForSession(sessionId);
+        if (!mounted) return;
+      }
+
+      // Show confirmation dialog with attendance list
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 12),
+              Text('Review & Close Session'),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 400,
+            child: Column(
+              children: [
+                const Text(
+                  'Review attendance before closing. You can change the absence type (Justified/Unjustified) for any student.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: _students.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.groups_outlined,
+                                  size: 64,
+                                  color: Colors.grey.shade400,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No students to review',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : _buildAttendanceDialog(sessionId),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () {
+                _saveAttendanceAndCloseSession(sessionId);
+                Navigator.pop(context);
+              },
+              child: const Text('Save & Close Session'),
+            ),
           ],
         ),
-        content: const Text(
-          'Are you sure you want to close this session? Attendance records will be saved.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+      );
+    } catch (e) {
+      debugPrint('Error in _closeSession: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error preparing session close: $e'),
+            backgroundColor: Colors.red,
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              _saveAttendanceAndCloseSession(sessionId);
-              Navigator.pop(context);
-            },
-            child: const Text('Close Session'),
-          ),
-        ],
-      ),
-    );
+        );
+      }
+    }
   }
 
   Future<void> _saveAttendanceAndCloseSession(String sessionId) async {
@@ -483,6 +578,12 @@ class _TeacherScreenState extends State<TeacherScreen> {
   Widget _buildAttendanceDialog(String sessionId) {
     final sessionData = _attendanceMap[sessionId] ?? {};
 
+    debugPrint('=== BUILDING DIALOG ===');
+    debugPrint('SessionId: $sessionId');
+    debugPrint('Students count: ${_students.length}');
+    debugPrint('Attendance map keys: ${_attendanceMap.keys.toList()}');
+    debugPrint('Session data: $sessionData');
+
     return AlertDialog(
       title: const Text('Manage Session Attendance'),
       content: SizedBox(
@@ -506,6 +607,15 @@ class _TeacherScreenState extends State<TeacherScreen> {
                           fontSize: 16,
                           color: Colors.grey.shade600,
                           fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Session: $sessionId\nAttendance Map has ${sessionData.length} entries',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
                         ),
                       ),
                     ],

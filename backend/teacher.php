@@ -221,23 +221,31 @@ else if ($action === 'update-attendance' && $_SERVER['REQUEST_METHOD'] === 'PUT'
                                 WHERE session_id = '" . sanitize($session_id) . "' 
                                 AND student_id = '" . sanitize($student_id) . "'");
     
-    if (!$existing) {
-        error('Attendance record not found', 404);
+    $old_status = $existing ? $existing['attendance_status'] : 'Not Submitted';
+    
+    if ($existing) {
+        // MAIN FLOW: Update existing attendance status
+        $sql = "UPDATE attendance_records 
+                SET attendance_status = '" . sanitize($new_status) . "', marked_by = '" . sanitize($teacher_id) . "', last_modified = NOW()
+                WHERE session_id = '" . sanitize($session_id) . "' AND student_id = '" . sanitize($student_id) . "'";
+        
+        executeInsertUpdateDelete($sql);
+    } else {
+        // MAIN FLOW: Create new attendance record for student who didn't submit
+        $record_id = 'AR_' . time() . '_' . rand(1000, 9999);
+        $sql = "INSERT INTO attendance_records (record_id, session_id, student_id, attendance_status, submission_time, marked_by, last_modified) 
+                VALUES ('" . sanitize($record_id) . "', '" . sanitize($session_id) . "', '" . sanitize($student_id) . "', 
+                        '" . sanitize($new_status) . "', NOW(), '" . sanitize($teacher_id) . "', NOW())";
+        
+        executeInsertUpdateDelete($sql);
     }
-    
-    // MAIN FLOW: Update attendance status
-    $sql = "UPDATE attendance_records 
-            SET attendance_status = '" . sanitize($new_status) . "', marked_by = '" . sanitize($teacher_id) . "', last_modified = NOW()
-            WHERE session_id = '" . sanitize($session_id) . "' AND student_id = '" . sanitize($student_id) . "'";
-    
-    executeInsertUpdateDelete($sql);
     
     // MAIN FLOW: Recalculate student status
     $updated_status = recalculateStudentStatus($student_id, $course_id);
     
     // MAIN FLOW: Return result
     success('Attendance updated successfully', [
-        'old_status' => $existing['attendance_status'],
+        'old_status' => $old_status,
         'new_status' => $new_status,
         'student_status' => $updated_status
     ]);
@@ -409,19 +417,27 @@ else if ($action === 'session-attendance' && $_SERVER['REQUEST_METHOD'] === 'GET
     
     $course_id = $session['course_id'];
     
-    // Get all enrolled students with their attendance status
-    $sql = "SELECT cs.student_id, 
+    // Get all students with their attendance status
+    // Include: 1) Students enrolled in the course, 2) Students who submitted attendance for this session
+    $sql = "SELECT DISTINCT
+                   COALESCE(cs.student_id, ar.student_id) as student_id,
                    COALESCE(u.full_name, u.username) as name,
                    u.user_id,
                    COALESCE(ar.attendance_status, 'absent') as attendance_status,
                    ar.record_id,
-                   ar.submission_time
-            FROM course_students cs
-            JOIN students s ON cs.student_id = s.student_id
-            JOIN users u ON s.user_id = u.user_id
-            LEFT JOIN attendance_records ar ON cs.student_id = ar.student_id AND ar.session_id = '" . sanitize($session_id) . "'
-            WHERE cs.course_id = '" . sanitize($course_id) . "'
-            ORDER BY u.full_name";
+                   ar.submission_time,
+                   COALESCE(u.full_name, u.username) as sort_name
+            FROM (
+              SELECT student_id FROM course_students WHERE course_id = '" . sanitize($course_id) . "'
+              UNION
+              SELECT student_id FROM attendance_records WHERE session_id = '" . sanitize($session_id) . "'
+            ) as student_list
+            LEFT JOIN course_students cs ON student_list.student_id = cs.student_id AND cs.course_id = '" . sanitize($course_id) . "'
+            LEFT JOIN students s ON student_list.student_id = s.student_id
+            LEFT JOIN users u ON s.user_id = u.user_id
+            LEFT JOIN attendance_records ar ON student_list.student_id = ar.student_id AND ar.session_id = '" . sanitize($session_id) . "'
+            WHERE u.user_id IS NOT NULL
+            ORDER BY COALESCE(u.full_name, u.username)";
     
     $students = executeSelect($sql);
     
